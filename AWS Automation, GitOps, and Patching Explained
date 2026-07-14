@@ -1,0 +1,210 @@
+his entire setup from scratch, you need to understand two things: how the files are organized inside your repository, and the exact order in which GitHub executes your new three-stage pipeline.
+
+Here is the complete blueprint to build it from the ground up.
+
+1. The Repository Architecture
+Create a folder on your local machine (e.g., aws-file-deployer). Inside that folder, you must build the exact directory structure below.
+
+Plaintext
+aws-file-deployer/               <-- Your root Git repository directory
+├── .github/                     
+│   └── workflows/               
+│       └── main.yml             <-- [Stage 1, 2, & 3 Workflow Configuration]
+├── demo_aws_ec2.yml             <-- [Ansible Dynamic Inventory Map]
+├── deploy.yml                   <-- [Ansible Instructions Playbook]
+└── helloworld.py                <-- [Your Python Application Script]
+The Missing Piece: helloworld.py
+Make sure to create helloworld.py in the root folder with whatever code you want to run. For example:
+
+Python
+# helloworld.py
+print("Hello World! The Python validation stage is running successfully.")
+2. Visualizing the Multi-Stage Pipeline Execution
+Because you configured needs: run_python_script and needs: check_aws_ssm, GitHub Actions visualizes and executes your pipeline as a strict sequential chain. Each stage spins up a completely separate, isolated ubuntu-latest virtual machine.
+
+[git push origin main]
+          │
+          ▼
+┌───────────────────────────────┐
+│ STAGE 1: run_python_script    │ ◄── Spins up Runner VM #1
+│ - Installs Python             │
+│ - Executes local script       │
+└──────────────┬────────────────┘
+               │ (Success)
+               ▼
+┌───────────────────────────────┐
+│ STAGE 2: check_aws_ssm        │ ◄── Spins up Runner VM #2
+│ - Authenticates with AWS      │
+│ - Scans EC2 for Prod tags     │
+│ - Validates SSM Ping status   │
+└──────────────┬────────────────┘
+               │ (Success)
+               ▼
+┌───────────────────────────────┐
+│ STAGE 3: run_ansible          │ ◄── Spins up Runner VM #3
+│ - Authenticates with AWS      │
+│ - Installs Ansible + Plugins  │
+│ - Deploys both files via SSM  │ ──► [Host 1] & [Host 2]
+└───────────────────────────────┘
+3. Step-by-Step Deployment Guide from Scratch
+Step A: Initialize Your Repository
+Open your terminal inside your project folder and run the following commands to initialize Git and add your files:
+
+Bash
+git init
+git add .
+git commit -m "Initial commit: Multi-stage AWS deployment architecture"
+Step B: Save Your Credentials Safely
+Never hardcode your AWS access keys in your YAML files!
+
+Go to your repository on GitHub.
+
+Navigate to Settings ──► Secrets and variables ──► Actions.
+
+Click New repository secret and add:
+
+AWS_ACCESS_KEY_ID: Your AWS access key.
+
+AWS_SECRET_ACCESS_KEY: Your AWS secret key.
+
+Step C: Push to Production
+Link your local folder to GitHub and push:
+
+Bash
+git remote add origin <your-github-repo-url>
+git branch -M main
+git push -u origin main
+Once pushed, click on the Actions tab in GitHub. You will see all three stages light up one by one. If Stage 1 or Stage 2 encounters an error, the pipeline will immediately halt, protecting your production servers from incorrect configurations.
+================
+
+In GitHub Actions, we achieve this by defining separate jobs and using the needs keyword to force them to run in a strict sequence.
+
+Here is the complete, production-ready code for your .github/workflows/main.yml.
+
+The Full Code: .github/workflows/main.yml
+YAML
+name: AWS Instance File Deployment
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  # ==========================================
+  # STAGE 1: Run Python Script Locally
+  # ==========================================
+  run_python_script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Run HelloWorld Script
+        run: |
+          python helloworld.py
+
+  # ==========================================
+  # STAGE 2: Validate AWS & SSM Connectivity
+  # ==========================================
+  check_aws_ssm:
+    runs-on: ubuntu-latest
+    needs: run_python_script  # <-- Only runs if Stage 1 succeeds
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      # This verifies that your 2 target hosts are actually online and responding to SSM
+      # before Ansible attempts to run.
+      name: Verify EC2 SSM Status
+      run: |
+        echo "Checking for running instances tagged Environment=Production..."
+        INSTANCE_IDS=$(aws ec2 describe-instances \
+          --filters "Name=tag:Environment,Values=Production" "Name=instance-state-name,Values=running" \
+          --query "Reservations[*].Instances[*].InstanceId" --output text)
+        
+        if [ -z "$INSTANCE_IDS" ]; then
+          echo "ERROR: No production instances found!"
+          exit 1
+        fi
+
+        echo "Verifying SSM connectivity for instances: $INSTANCE_IDS"
+        for id in $INSTANCE_IDS; do
+          STATUS=$(aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$id" --query "InstanceInformationList[0].PingStatus" --output text)
+          if [ "$STATUS" != "Online" ]; then
+            echo "ERROR: Instance $id is not Online in SSM! Status: $STATUS"
+            exit 1
+          fi
+          echo "Instance $id is Online and ready."
+        done
+
+  # ==========================================
+  # STAGE 3: Run Ansible Playbook
+  # ==========================================
+  run_ansible:
+    runs-on: ubuntu-latest
+    needs: check_aws_ssm  # <-- Only runs if Stage 2 succeeds
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Set up Ansible and AWS Collection
+        run: |
+          pip install boto3 botocore
+          ansible-galaxy collection install amazon.aws
+          sudo curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o "session-manager-plugin.deb"
+          sudo dpkg -i session-manager-plugin.deb
+
+      - name: Run Ansible Playbook
+        run: |
+          ansible-playbook -i demo_aws_ec2.yml deploy.yml
+Update to Your Ansible File (deploy.yml)
+Since you mentioned you want Stage 3 to copy two files (your configuration file AND your helloworld.py file) to the 2 target hosts, update your deploy.yml playbook file to look like this:
+
+YAML
+- name: Deploy files to production hosts
+  hosts: all
+  gather_facts: false
+  vars:
+    ansible_connection: aws_ssm
+  
+  tasks:
+    # File 1: Your original text configuration file
+    - name: Create the config file on the servers
+      ansible.builtin.copy:
+        dest: /tmp/config.txt
+        content: "Config updated via GitHub Actions pipeline on 2026-07-14\n"
+        mode: '0644'
+
+    # File 2: Copy the helloworld.py file from the repository to the EC2 hosts
+    - name: Copy helloworld.py to the servers
+      ansible.builtin.copy:
+        src: helloworld.py
+        dest: /tmp/helloworld.py
+        mode: '0755'
+How this workflow behaves:
+Isolation: Each stage runs on a completely fresh ubuntu-latest runner instance.
+
+Dependency Tree: Stage 2 will wait for Stage 1. Stage 3 will wait for Stage 2. If Stage 1 fails (e.g., your Python script has a syntax error), Stage 2 and Stage 3 will be canceled automatically.
+
+Safety Layer: Stage 2 functions as a gatekeeper. It explicitly checks AWS SSM to verify your 2 hosts are healthy before handing off execution to Ansible, saving execution time if a server is offline.
+==================================
