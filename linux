@@ -1,0 +1,49 @@
+# ⏱️ 10 More 30-Second Interview Answers
+
+## Q1: What is the difference between high CPU usage and a high Load Average?
+"High CPU usage means the processor cores are actively churning through compute-heavy calculations. High Load Average measures the total number of processes in the execution queue—meaning tasks that are either actively using the CPU *or* waiting in an uninterruptible state for disk, network, or system I/O. You can easily have 5% CPU utilization but a massive load average if processes are bottlenecked waiting on a hung NFS mount or slow storage."
+
+---
+
+## Q2: What does it mean if a process is in a 'D' state (Uninterruptible Sleep) in top, and can you kill it?
+"A process in a 'D' state is blocked waiting for an I/O operation to complete, usually involving hardware or network filesystems. You cannot kill a 'D' state process, even with `kill -9`, because the kernel completely masks signals for that process until the underlying I/O system call returns. The only ways to clear it are to resolve the stuck I/O device, wait it out, or reboot the server."
+
+---
+
+## Q3: You can ping an external IP address like 8.8.8.8, but pinging 'google.com' fails. What is the issue and how do you fix it?
+"This indicates a DNS resolution failure. Your network layer connectivity is fully functional because raw IPs respond, but your system cannot resolve domain names. I would first check `/etc/resolv.conf` to ensure valid nameservers are listed, test resolution using `dig google.com` or `nslookup`, and verify that local name resolution policies in `/etc/nsswitch.conf` are configured correctly."
+
+---
+
+## Q4: How do you check which local processes are listening on specific ports on a server?
+"I use the `ss` or `netstat` commands with the flags `-tulpn`, which stands for TCP, UDP, Listening, Process Name, and Numeric ports. For example, running `sudo ss -tulpn` will give me a clean list of all bound ports, the IP addresses they are listening on (like `127.0.0.1` vs `0.0.0.0`), and the exact Process ID (PID) and daemon name responsible for that socket."
+
+---
+
+## Q5: A service is listening on 127.0.0.1:8080, but external clients cannot connect to it. The firewall is open. What is wrong?
+"The service is bound strictly to the local loopback interface, meaning it will exclusively accept traffic originating from inside the host itself. To fix this so external clients can connect, the application's configuration must be updated to bind to the server's specific private/public network IP address, or to `0.0.0.0`, which tells the kernel to listen on all available network interfaces."
+
+---
+
+## Q6: You can ping your local gateway, but you cannot reach any external internet IPs. What do you check?
+"This indicates a routing or gateway issue rather than a physical link failure. I would immediately check the kernel routing table by running `ip route` or `route -n`. I'm looking to verify that a default route (indicated by `default` or `0.0.0.0/0`) exists and correctly points to the IP address of the next-hop upstream router or internet gateway."
+
+---
+
+## Q7: How do you identify which process is causing a massive spike in disk I/O, slowing down the server?
+"While `top` shows CPU and memory hogs, I use `iotop` or `vmstat` to isolate disk I/O bottlenecks. Running `sudo iotop -o` filters the output to show only the active processes currently performing read and write operations. This allows me to instantly pinpoint the exact PID and process name that is saturating the disk bandwidth."
+
+---
+
+## Q8: What is the purpose of the /etc/hosts file, and how does it relate to external DNS?
+"The `/etc/hosts` file acts as a static, local lookup table mapping hostnames directly to IP addresses. By default on Linux (controlled by `/etc/nsswitch.conf`), the operating system evaluates the `/etc/hosts` file *before* querying external DNS servers. This makes it an excellent tool for local testing, staging overrides, or defining critical internal mappings that shouldn't rely on network DNS."
+
+---
+
+## Q9: How do you isolate interface-level network errors, packet drops, or collisions on a specific NIC?
+"I check low-level interface statistics using `ip -s link show <interface>` (such as `eth0`) or the `ethtool` command. I look specifically at the `errors`, `dropped`, and `overrun` counters under the receive (RX) and transmit (TX) sections. A high number of drops or errors usually points to physical cabling issues, bad switch port configurations, or a network ring buffer saturation."
+
+---
+
+## Q10: What is the risk of using kill -9 (SIGKILL) right away on a production database or application?
+"Sending a `SIGKILL` instantly terminates a process at the kernel level without giving it a chance to handle the signal. The application cannot execute any cleanup routines, leaving file descriptors open, network connections abruptly severed, and data half-written. In a database, this can cause transaction corruption and force a lengthy crash-recovery process upon reboot. Always try a graceful `SIGTERM` (kill) first."
