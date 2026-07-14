@@ -3,6 +3,36 @@
 ## Q1: What is the difference between high CPU usage and a high Load Average?
 "High CPU usage means the processor cores are actively churning through compute-heavy calculations. High Load Average measures the total number of processes in the execution queue—meaning tasks that are either actively using the CPU *or* waiting in an uninterruptible state for disk, network, or system I/O. You can easily have 5% CPU utilization but a massive load average if processes are bottlenecked waiting on a hung NFS mount or slow storage."
 
+
+## 💡 Practical Example: The Stuck NFS Mount
+
+### The Scenario
+Imagine a production server mounts a remote storage volume over the network via **NFS (Network File System)**. 
+
+A backup script runs at midnight to write compressed archives directly to that NFS directory. At 12:05 AM, the remote storage server experiences a sudden hardware crash or a network switch fails, severing the connection.
+
+### What Happens Inside Linux
+1. The backup process makes a standard system call (`write()`) to save data to the disk.
+2. The Linux kernel pauses the process and moves it into the kernel space to handle the hardware/network I/O.
+3. Because the network share is gone, the kernel stands by, stubbornly waiting for the remote storage to acknowledge the data.
+4. The kernel marks the backup process with a **`D` state (Uninterruptible Sleep)** to protect the integrity of the filesystem.
+
+### The Interview Context (What you see in the terminal)
+If you run `top` or `ps aux`, you will see something like this:
+
+USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+root      8492  0.0  0.1  18456  2048 ?        D    00:00   0:00 tar -czf /mnt/nfs/backup.tar.gz /data
+
+If you try to clear it:
+$ sudo kill -9 8492
+(Result: Absolutely nothing happens. The process ignores the command and stays in the process table.)
+
+### 🛠️ The Production Fix
+To clear this `D` state process without rebooting the server, you must target the underlying I/O block:
+1. Try to force unmount the dead network share: `umount -f -l /mnt/nfs`
+2. Once the kernel forces the mount to drop, the system call fails, the process wakes up from the `D` state, processes the pending `SIGKILL` you sent earlier, and instantly vanishes.
+
+
 ---
 
 ## Q2: What does it mean if a process is in a 'D' state (Uninterruptible Sleep) in top, and can you kill it?
@@ -33,6 +63,12 @@
 ## Q7: How do you identify which process is causing a massive spike in disk I/O, slowing down the server?
 "While `top` shows CPU and memory hogs, I use `iotop` or `vmstat` to isolate disk I/O bottlenecks. Running `sudo iotop -o` filters the output to show only the active processes currently performing read and write operations. This allows me to instantly pinpoint the exact PID and process name that is saturating the disk bandwidth."
 
+# Step 1: Find the drive-hogging process
+sudo iotop -o  # Identifies PID 4152 (Postgres)
+
+# Step 2: Pinpoint the exact file being hammered
+sudo lsof -p 4152 | grep -E 'REG|log|data'
+
 ---
 
 ## Q8: What is the purpose of the /etc/hosts file, and how does it relate to external DNS?
@@ -42,6 +78,15 @@
 
 ## Q9: How do you isolate interface-level network errors, packet drops, or collisions on a specific NIC?
 "I check low-level interface statistics using `ip -s link show <interface>` (such as `eth0`) or the `ethtool` command. I look specifically at the `errors`, `dropped`, and `overrun` counters under the receive (RX) and transmit (TX) sections. A high number of drops or errors usually points to physical cabling issues, bad switch port configurations, or a network ring buffer saturation."
+
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP mode DEFAULT group default qlen 1000
+    link/ether 52:54:00:fa:19:bc brd ff:ff:ff:ff:ff:ff
+    RX:  bytes  packets errors  dropped overrun mcast   
+    9481023844  7102394      0     4821    4821       0
+    TX:  bytes  packets errors  dropped carrier collsns 
+    1204918203  5092183     12        0       0       0
+Analysis: * Under RX, you see 4821 drops matched perfectly with 4821 overruns. This means the hardware is fine, but the system is dropping packets because the kernel cannot process them fast enough from the ring buffer.
+Under TX, you see 12 errors. If this number increases rapidly over time, it indicates an upstream network issue (like a bad switch port or physical duplex mismatch).
 
 ---
 
