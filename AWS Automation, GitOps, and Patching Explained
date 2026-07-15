@@ -1,4 +1,4 @@
-his entire setup from scratch, you need to understand two things: how the files are organized inside your repository, and the exact order in which GitHub executes your new three-stage pipeline.
+This entire setup from scratch, you need to understand two things: how the files are organized inside your repository, and the exact order in which GitHub executes your new three-stage pipeline.
 
 Here is the complete blueprint to build it from the ground up.
 
