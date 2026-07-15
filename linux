@@ -48,6 +48,28 @@ To clear this `D` state process without rebooting the server, you must target th
 ## Q4: How do you check which local processes are listening on specific ports on a server?
 "I use the `ss` or `netstat` commands with the flags `-tulpn`, which stands for TCP, UDP, Listening, Process Name, and Numeric ports. For example, running `sudo ss -tulpn` will give me a clean list of all bound ports, the IP addresses they are listening on (like `127.0.0.1` vs `0.0.0.0`), and the exact Process ID (PID) and daemon name responsible for that socket."
 
+
+What ss -tulpn Actually Does
+Running ss -tulpn is like walking into the mailroom with a clipboard and asking: "Which mailboxes currently have a worker standing in front of them right now, and what is that worker's employee ID?"
+Here is exactly what the flags mean when you type them:
+Flag	Meaning	What it shows you
+-t	TCP	Show me all mailboxes handling standard, reliable TCP mail.
+-u	UDP	Show me all mailboxes handling fast, lightweight UDP mail.
+-l	Listening	Only show me workers actively waiting for incoming mail (ignore active conversations).
+-p	Processes	Show me the exact name and Process ID (PID) of the worker holding the mailbox.
+-n	Numeric	Show raw numbers (e.g., display 22 instead of translating it to the word "ssh").
+
+The Concrete Output Breakdown
+When you see this line in your terminal:
+
+Plaintext
+tcp   LISTEN   0   128   0.0.0.0:80   0.0.0.0:* users:(("nginx",pid=1432,fd=6))
+
+It reads like a simple sentence:
+"There is a TCP socket actively LISTENING on all interfaces (0.0.0.0) at port 80. The application holding it open is nginx, running under Process ID 1432."
+If you need to deploy something else on port 80, you now know exactly who to stop: PID 1432
+
+
 ---
 
 ## Q5: A service is listening on 127.0.0.1:8080, but external clients cannot connect to it. The firewall is open. What is wrong?
