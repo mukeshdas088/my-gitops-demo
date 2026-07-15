@@ -1,0 +1,77 @@
+🚀 Cloud SRE High-Impact Interview Cheat Sheet
+🛡️ Module 1: Cloud Architecture & High Availability (AWS)
+
+Q1: How do you design a system to handle sudden, massive traffic spikes on AWS without dropping requests?
+💬 30-Second Interview Answer: > "I implement an asynchronous, decoupled architecture using Amazon SQS as a buffer in front of our compute workers. Incoming traffic is instantly queued in SQS, shielding databases and downstream backend services from direct compute saturation. We then configure an EC2 Auto Scaling Group or AWS Lambda workers driven by CloudWatch metrics (like ApproximateNumberOfMessagesVisible) to dynamically scale out based on the actual queue backlog size."
+
+Q2: What is the functional difference between an AWS NAT Gateway and an Internet Gateway (IGW)?
+💬 30-Second Interview Answer: > "An Internet Gateway provides two-way, public internet access for resources located inside a public subnet that possess public IP addresses. A NAT Gateway allows resources inside a private subnet—which only have private IP addresses—to securely access the external internet for software patches or outbound API calls, while completely blocking the external internet from initiating any inbound connections back into those private instances."
+
+Q3: Explain the functional difference between Security Groups and Network Access Control Lists (NACLs) regarding state management.
+💬 30-Second Interview Answer: > "Security Groups are stateful and operate at the individual instance or ENI level. If you allow inbound traffic on a port, the return outbound traffic is automatically permitted regardless of outbound rules. Conversely, Network ACLs are stateless and operate at the subnet boundary. They evaluate traffic twice: rules must be explicitly defined for both inbound and outbound paths, meaning you must open up broad ephemeral port ranges to allow return traffic to flow back out."
+⚙️ Module 2: Infrastructure as Code (IaC) & Automation
+
+Q4: How do you securely manage Terraform state files in a team, and what happens during concurrent applies?
+💬 30-Second Interview Answer: > "We isolate state files using a secure Remote Backend setup, storing them in an AWS S3 bucket with mandatory encryption at rest, bucket versioning, and strict IAM access controls. To handle concurrency and prevent state corruption, we attach a distributed locking mechanism using DynamoDB. If two engineers execute a terraform apply at the same time, the first process locks the state file in DynamoDB, causing the second execution to be safely blocked and rejected until the first run finishes."
+
+Q5: What is the operational division of labor between Terraform and Ansible in a deployment pipeline?
+💬 30-Second Interview Answer: > "Terraform is an Infrastructure Provisioning tool, whereas Ansible is a Configuration Management tool. Terraform uses a declarative model to orchestrate the skeletal baseline cloud infrastructure—creating the VPCs, firewalls, and underlying virtual machines. Once those resources exist, Ansible takes over to handle the software layer inside the machines, executing tasks like installing packages, tuning OS kernel parameters, and deploying application daemons."
+📊 Module 3: SRE Concepts, Metrics, & Incident Management
+
+Q6: A critical service's availability drops below its SLO. Explain what an Error Budget is and what happens when it is completely exhausted.
+💬 30-Second Interview Answer: > "An Error Budget represents the allowable room for service unreliability over a rolling window, mathematically calculated as 100%−SLO. For example, a 99.9% Availability SLO allows for a 0.1% error budget of acceptable downtime. If an outage burns through that budget completely, it triggers a strict Error Budget Policy: feature rollouts are immediately frozen, and engineering cycles are forced to pivot entirely toward reliability engineering, automated testing, bug fixes, and paying down technical debt until the service returns within its SLO threshold."
+
+Q7: During a critical outage, what is your immediate priority, and how do you approach the post-incident process?
+💬 30-Second Interview Answer: > "The immediate priority is always mitigation over investigation—my goal is to restore service availability as fast as possible by rolling back changes, restarting components, or failing over traffic. In-depth investigation comes later. Once stable, we conduct a Blameless Post-Mortem using the '5 Whys' methodology to trace the systemic failure down to its root cause. The objective is never to point fingers, but to generate actionable engineering tickets that harden the system against that specific failure mode."
+🐧 Module 4: Linux OS & Networking Troubleshooting
+
+Q8: What is the difference between systemctl stop and systemctl kill?
+💬 30-Second Interview Answer: > "systemctl stop is the standard way to stop a service gracefully. It executes the configured ExecStop commands, sends a SIGTERM, waits for the application to clean up resources, and only escalates to SIGKILL if a timeout is reached. On the other hand, systemctl kill bypasses the graceful routine entirely and immediately sends a specified signal—defaulting to SIGTERM—directly to all processes within that service's cgroup. I would use systemctl kill primarily when a service is completely hung or unresponsive."
+
+Q9: A process is stuck in a 'D' state (Uninterruptible Sleep) in top. Can you kill it with kill -9? How do you clear it?
+💬 30-Second Interview Answer: > "A process in a 'D' state is blocked waiting for an I/O operation to complete, usually involving hardware or network filesystems like NFS. No, you cannot kill it, even with kill -9, because the kernel completely masks signals for that process until the underlying I/O system call returns. The only ways to clear it without a full server reboot are to resolve the stuck hardware block (such as force-unmounting a dead NFS share via umount -f -l), or wait for the device to wake up."
+
+Q10: A disk space alert goes off (df -h shows 100% full). You delete a massive 50GB log file, but df -h still shows the disk is 100% full. Why, and how do you fix it?
+💬 30-Second Interview Answer: > "Deleting the file removes its directory entry, but if a running process still has the file open, Linux doesn't release the disk blocks until the file descriptor is closed. This causes a mismatch where df shows 100% usage but du reports empty space. I would verify this using lsof +L1 or lsof | grep deleted to isolate the PID and File Descriptor number. In production, I'd first try a graceful restart or an SIGHUP reload of the service. If that's not immediately possible, I can instantly reclaim the space without downtime by truncating the open file descriptor through > /proc/<PID>/fd/<FD>."
+
+Q11: What is the difference between ping and traceroute when debugging network latency or outages?
+💬 30-Second Interview Answer: > "Think of it this way: ping answers the question, 'Can I reach the destination, and how long does the total trip take?' It tracks overall latency and packet loss using ICMP. traceroute answers the question, 'Where along the path is the bottleneck or break?' It increments packet TTL values to force every intermediate router to reply, allowing us to pinpoint exactly which hop or ISP network is introducing latency or dropping traffic."
+
+Q12: You can ping an external IP address like 8.8.8.8, but pinging 'google.com' fails. What is the issue and how do you fix it?
+💬 30-Second Interview Answer: > "This indicates a DNS resolution failure. Your network layer connectivity is fully functional because raw IPs respond, but your system cannot resolve domain names. I would first check /etc/resolv.conf to ensure valid nameservers are listed, test resolution using dig google.com or nslookup, and verify that local name resolution policies in /etc/nsswitch.conf are configured correctly. If /etc/resolv.conf is broken, I would temporarily add nameserver 8.8.8.8 to restore traffic."
+
+Q13: A service is listening on 127.0.0.1:8080, but external clients cannot connect to it. The firewall is open. What is wrong?
+💬 30-Second Interview Answer: > "The service is bound strictly to the local loopback interface, meaning it will exclusively accept traffic originating from inside the host itself. To fix this so external clients can connect, the application's configuration must be updated to bind to the server's specific private/public network IP address, or to 0.0.0.0, which tells the kernel to listen on all available network interfaces simultaneously. I would audit this status using sudo ss -tulpn."
+
+Q14: How do you check which local processes are listening on specific ports on a server?
+💬 30-Second Interview Answer: > "I use the ss or netstat commands with the flags -tulpn, which stands for TCP, UDP, Listening, Process Name, and Numeric ports. For example, running sudo ss -tulpn will give me a clean list of all bound ports, the IP addresses they are listening on (like 127.0.0.1 vs 0.0.0.0), and the exact Process ID (PID) and daemon name responsible for that socket."
+
+Q15: How do you isolate interface-level network errors, packet drops, or collisions on a specific NIC?
+💬 30-Second Interview Answer: > "I check low-level interface statistics using ip -s link show <interface> (such as eth0) or the ethtool command. I look specifically at the errors, dropped, and overrun counters under the receive (RX) and transmit (TX) sections. A high number of drops matched with overruns tells me the network ring buffer is saturating because the CPU isn't processing packets fast enough, which I can fix by increasing buffer sizes using sudo ethtool -G <interface> rx 4096."
+
+
+
+
+🛠️ Diagnostics & Command Reference Sheet
+
+Keep these quick syntax snippets in mind if asked to write a triage command on a shared screen:
+
+
+Bash
+# Locate deleted-but-open files holding disk space hostage
+sudo lsof +L1
+
+# Check local bound ports, listening status, and owning PIDs
+sudo ss -tulpn
+
+# Sort and display the top 5 CPU hogging processes
+ps aux --sort=-%cpu | head -n 6
+
+# View the last 50 lines of an application journal without pager truncation
+journalctl -u nginx.service -n 50 --no-pager
+
+# Track interface drops, hardware overruns, and layer-2 errors
+ip -s link show eth0
+
+# Adjust network interface card (NIC) ring buffer size to stop drops
+sudo ethtool -G eth0 rx 4096
